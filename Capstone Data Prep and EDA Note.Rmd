@@ -1,0 +1,314 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#-------------------Adding the code for Data Prep and EDA----------------------------------------------
+
+```{r}
+
+setwd("C:/Upgrad/Capstone/R code")
+
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(dplyr)
+library(xlsx)
+library(DataExplorer)
+library(DataCombine)
+```
+
+```{r}
+# get the cosnumer electronics data to data frame
+
+consumer_electronics <- read.csv("ConsumerElectronics.csv", stringsAsFactors = F)
+
+nrow(consumer_electronics) #16,48,824
+
+
+#taking observations from July 2015 to June 2016
+consumer_electronics = consumer_electronics[ which( (consumer_electronics$Year == '2015' & consumer_electronics$Month > 6) | (consumer_electronics$Year == '2016' & consumer_electronics$Month < 7) ), ]
+
+nrow(consumer_electronics) #16,48,215
+#SO now 609 rows got removed
+
+```
+
+```{r}
+#checking for missing values in df using consumer_electronicsExplorer
+plot_missing(consumer_electronics)
+# From the Graph we can know there are some missing values for pincode, cust_id and gmv column
+
+
+#Checking for null values
+table(is.na(consumer_electronics))
+#FALSE     TRUE 
+#32949588    14712 
+#so there are 14712 null cells
+
+#column wise missing values count
+sapply(consumer_electronics[c("pincode", "cust_id", "gmv")], function(x) sum(is.na (x)))
+#pincode cust_id     gmv 
+#4904    4904       4904   
+
+#So gmv, cust_id and pincode have 4904 missing values each.
+
+consumer_electronics = na.omit(consumer_electronics)
+nrow(consumer_electronics)#16,43,311
+
+# Earlier nrow count was 16,48,215 and now it is 16,43,311 after omitting 4904 rows.
+
+#Checking for null values again
+table(is.na(consumer_electronics))
+#FALSE 
+#32878400 
+# so there are No null cells
+
+```
+```{r}
+#what to do with negative integers and \\N
+unique(consumer_electronics$deliverybdays)
+
+unique(consumer_electronics$deliverycdays)
+
+
+# changing values to 0 for No Delay
+consumer_electronics <- consumer_electronics %>%
+  mutate( 
+    deliverybdays  = ifelse(deliverybdays == "\\N", 0, deliverybdays),
+    deliverycdays  = ifelse(deliverycdays == "\\N", 0, deliverycdays)
+  )
+
+consumer_electronics <- consumer_electronics %>%
+  mutate( 
+    deliverybdays  = ifelse(deliverybdays < 0, -1 , deliverybdays),
+    deliverycdays  = ifelse(deliverycdays < 0, -1 , deliverycdays),
+    deliverybdays  = ifelse(deliverybdays > 0,  1 , deliverybdays),
+    deliverycdays  = ifelse(deliverycdays > 0,  1 , deliverycdays)
+  )
+
+consumer_electronics$deliverybdays = as.factor(consumer_electronics$deliverybdays)
+consumer_electronics$deliverycdays = as.factor(consumer_electronics$deliverycdays)
+
+
+#summary(consumer_electronics$deliverybdays)
+#-1       0       1 
+#38 1310324  332949
+
+#summary(consumer_electronics$deliverycdays)
+#-1       0       1 
+#39 1308505  334767
+
+#So we shall assume that 
+# -1 is the delivery after delivery date.
+#  0 is the delivery on     delivery date.
+# +1 is the delivery before deliver date.
+
+
+```
+
+```{r}
+# Find if customers are repeated and same product being ordered
+nrow(consumer_electronics) #1643311
+#Checking for unique values in fsn_id (product id) and cust_id
+length( unique(consumer_electronics$ï..fsn_id) ) # 21212
+length( unique(consumer_electronics$cust_id) ) # 1200692
+
+# so there are 21,212 different products 
+# and 12,00,692 customers making purchase
+# out of 16,43,311 records
+
+columns = colnames(consumer_electronics)
+columns
+
+# Checking unique values for category columns
+sapply( consumer_electronics[c("product_analytic_super_category", "product_analytic_category", "product_analytic_sub_category", "product_analytic_vertical")], function(x) length(unique(x)) )
+# product_analytic_super_category       product_analytic_category 
+# 1                                     5 
+# product_analytic_sub_category         product_analytic_vertical 
+# 14                                    74 
+
+
+
+#Here product_analytic_super_category column has only 1 value, so it can be removed from consumer_electronics frame
+consumer_electronics = select( consumer_electronics, -product_analytic_super_category )
+
+```
+
+```{r}
+#--------------- Adding Weekly Column ---------------------------------
+
+#Convert the string data to date and time
+dtparts = t(as.data.frame(strsplit(consumer_electronics$order_date,' ')))
+# convert the date to R date format
+colnames(dtparts)<-c("Date","Time")
+#Remove unnecessary column
+row.names(dtparts) = NULL
+
+#Merge in to the main data frames
+consumer_electronics<-cbind(consumer_electronics,dtparts)
+
+
+#Format the date in Ymd format
+consumer_electronics$Date <- as.Date(consumer_electronics$Date, "%Y-%m-%d")
+#Identify the week data with date function
+
+#Week as of the year
+consumer_electronics$week<-week(consumer_electronics$Date)
+
+
+str(consumer_electronics)
+
+
+unique(consumer_electronics$week)
+#------------------------------------------------------------------------
+
+```
+
+```{r}
+#------------ Adding Special Days Column--------------------------------
+
+# load the special sale calender 
+date <- as.Date(c("2015-07-18","2015-07-19","2015-08-15",
+                      "2015-08-16","2015-08-17","2015-08-28",
+                      "2015-08-29","2015-08-30","2015-10-15",
+                      "2015-10-16","2015-10-17","2015-11-07","2015-11-08","2015-11-09","2015-11-10",
+                      "2015-10-11","2015-10-12","2015-11-13","2015-11-14","2015-12-25","2015-12-26",
+                      "2015-12-27","2015-12-28","2015-12-29","2015-12-30","2016-01-01","2016-01-02",
+                      "2016-01-03","2016-01-20","2016-01-21","2016-01-22","2016-02-01","2016-02-02",
+                      "2016-02-20","2016-02-21","2016-02-14","2016-02-15","2016-03-07","2016-03-08",
+                      "2016-03-09","2016-05-25","2016-05-26","2016-05-27"))
+
+sales_calender <-data.frame(date)
+
+#View(sales_calender)
+
+#Format the date in Ymd format
+sales_calender$Date <- as.Date(sales_calender$date, "%Y-%m-%d")
+#Identify the week data with date function
+sales_calender$week<-week(sales_calender$date)
+
+specialDayVector = unique(sales_calender$week)
+
+# let's assign 0 value to each cell of weekHasHoliday column budefault 
+consumer_electronics$weekHasFestiveDay <- 0
+
+# comparing the week with the holiday week vector in sales_calender df
+consumer_electronics <- consumer_electronics %>%
+  mutate( 
+    weekHasFestiveDay  = ifelse(is.element(consumer_electronics$week, specialDayVector), 1, weekHasFestiveDay)
+  )
+
+sum(consumer_electronics$weekHasFestiveDay)
+
+
+#Concatenating week with year for better representation
+
+consumer_electronics <- consumer_electronics %>%
+  mutate( 
+    week  = ifelse(consumer_electronics$Year == 2015, paste("2016", consumer_electronics$week, sep = "-"), paste("2015-", consumer_electronics$week, sep = "-"))
+  )
+
+str(consumer_electronics)
+
+#------------ Adding Special Days Column--------------------------------
+
+```
+```{r}
+
+#------------ Load the investment consumer_electronics --------------------------------
+
+investment_consumer_electronics<-read.xlsx2("Media data and other information.xlsx", sheetIndex=2, 
+                                            sheetName="Media Investment", startRow=3, 
+                                            endRow=NULL, as.data.frame=TRUE, 
+                                            header=TRUE)
+
+View(investment_consumer_electronics)
+
+#Load the NPS data
+NPS <- c(54.6,	60.0,	46.9,	44.4,	47.0,	45.8	,47.1,	50.3,	49.0,	51.8,	47.3,	50.5)
+Month<- c(7,8,9,10,11,12,1,2,3,4,5,6)
+Year<-c(2015,2015,2015,2015,2015,2015,2016,2016,2016,2016,2016,2016)
+
+nps <-data.frame(NPS,Month,Year)
+
+#Merging nps data with investment data
+#investment_consumer_electronics <-merge(investment_consumer_electronics,nps,by="Month", all=T)
+investment_consumer_electronics<-merge(investment_consumer_electronics,nps,by=c("Month","Year"),all.x=TRUE)
+
+
+#Convert the investment consumer_electronics from factors to numbers (after converting to character)
+investment_consumer_electronics[3:12] <- sapply( investment_consumer_electronics[3:12],function(x) as.numeric(x) )
+
+#Align the consumer_electronics to weekly basis by doing an average division of 4.33 per month
+investment_consumer_electronics[3:12]<- sapply(investment_consumer_electronics[3:12],function(x) x/4.33)
+
+#Merge the consumer_electronics of investment in to the master consumer_electronics of consumer electronics
+consumer_electronics<-merge(consumer_electronics,investment_consumer_electronics,by="Month", all=T)
+
+#Convert the sub category to factor 
+consumer_electronics$product_analytic_sub_category<-as.factor(consumer_electronics$product_analytic_sub_category)
+
+summary(consumer_electronics$product_analytic_category)
+
+#------------ Load the investment consumer_electronics --------------------------------
+
+```
+
+```{r}
+#--------------- Aggregating gmv w.r.t product_analytic_sub_category ------------------
+
+aggregate(consumer_electronics$gmv, by=list(Category=consumer_electronics$product_analytic_sub_category), FUN=sum,na.rm=TRUE)
+
+aggregate(consumer_electronics$gmv, by=list(Category=consumer_electronics$product_analytic_sub_category), FUN=sum,na.rm=TRUE)
+
+```
+```{r}
+#--------------Subset with the required sub categories ----------------------------------
+
+consumer_electronics_accessory<-subset(consumer_electronics,((product_analytic_sub_category == 'CameraAccessory') | (product_analytic_sub_category == 'HomeAudio') |         (product_analytic_sub_category == 'GamingAccessory')))
+
+View(consumer_electronics_accessory)	
+
+
+aggregate(consumer_electronics_accessory$gmv, by=list(Category=consumer_electronics_accessory$product_analytic_sub_category), FUN=sum,na.rm=TRUE)
+
+```
+
+```{r}
+agg_data<-aggregate(consumer_electronics_accessory$gmv, by=list(Category=consumer_electronics_accessory$product_analytic_sub_category,weekly=consumer_electronics_accessory$week,
+                                                                paytype=consumer_electronics_accessory$s1_fact.order_payment_type), FUN=sum,na.rm=TRUE)
+
+agg_data
+#--------------Subset with the required sub categories ----------------------------------
+```
+```{r}
+
+# let's calucate price of the product 
+
+consumer_electronics_accessory$list_price <- consumer_electronics_accessory$gmv/consumer_electronics_accessory$units
+
+# let's capture the discount given on the product by comparing list price and mrp 
+
+consumer_electronics_accessory$discount <- (consumer_electronics_accessory$product_mrp-consumer_electronics_accessory$list_price)/consumer_electronics_accessory$product_mrp*100
+
+# Don`t know what it does --- Start`
+#subset_consumer_electo_accessory <- consumer_electronics_accessory[,c(2,35,36)]
+
+#subset_consumer_electo_accessory<-slide(subset_consumer_electo_accessory,Var= "list_price",GroupVar = "ï..fsn_id", slideBy = -1)
+#subset_consumer_electo_accessory<-slide(subset_consumer_electo_accessory,Var= "list_price",GroupVar = "ï..fsn_id", slideBy = -2)
+#subset_consumer_electo_accessory<-slide(subset_consumer_electo_accessory,Var= "list_price",GroupVar = "ï..fsn_id", slideBy = -3)
+# Don`t know what it does --- End
+
+
+```
+
+
+```{r}
+# Added to run moving avg function
+consumer_camera_accessory <- subset(consumer_electronics_accessory,product_analytic_sub_category == 'CameraAccessory')
+consumer_HomeAudio <- subset(consumer_electronics_accessory,product_analytic_sub_category == 'HomeAudio')
+consumer_gaming_accessory <- subset(consumer_electronics_accessory,product_analytic_sub_category == 'GamingAccessory')
+
+```
+
